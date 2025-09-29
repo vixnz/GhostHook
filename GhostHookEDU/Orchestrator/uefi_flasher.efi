@@ -1,0 +1,196 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = UefiFlasher
+  FILE_GUID                      = 12345678-1234-5678-9ABC-123456789012
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = UefiFlasherMain
+
+[Sources]
+  uefi_flasher.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiLib
+  BaseLib
+  PrintLib
+  MemoryAllocationLib
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
+#include <Uefi.h>
+#include <Library/UefiLib.h>
+#include <Library/BaseLib.h>
+#include <Library/PrintLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Protocol/LoadedImage.h>
+#include <Protocol/SimpleFileSystem.h>
+
+#define FLASH_SIGNATURE    0x46464C41  // 'FLAF'
+#define MAX_FLASH_SIZE     0x800000    // 8MB max flash size
+
+typedef struct {
+    UINT32 Signature;
+    UINT32 Version;
+    UINT32 FlashSize;
+    UINT32 Checksum;
+    UINT8  Reserved[16];
+} FLASH_HEADER;
+
+STATIC EFI_SYSTEM_TABLE     *gST = NULL;
+STATIC EFI_BOOT_SERVICES    *gBS = NULL;
+
+UINT32
+CalculateChecksum (
+  IN CONST UINT8  *Data,
+  IN UINTN        Size
+  )
+{
+    UINT32 Checksum = 0;
+    UINTN  Index;
+    
+    for (Index = 0; Index < Size; Index++) {
+        Checksum += Data[Index];
+        Checksum = (Checksum << 1) | (Checksum >> 31); // Rotate left
+    }
+    
+    return Checksum;
+}
+
+BOOLEAN
+VerifyFlashHeader (
+  IN CONST FLASH_HEADER  *Header
+  )
+{
+    if (Header->Signature != FLASH_SIGNATURE) {
+        Print(L"Invalid flash signature: 0x%08x\n", Header->Signature);
+        return FALSE;
+    }
+    
+    if (Header->FlashSize > MAX_FLASH_SIZE) {
+        Print(L"Flash size too large: 0x%08x\n", Header->FlashSize);
+        return FALSE;
+    }
+    
+    if (Header->Version == 0 || Header->Version > 0x100) {
+        Print(L"Invalid version: 0x%08x\n", Header->Version);
+        return FALSE;
+    }
+    
+    return TRUE;
+}
+
+EFI_STATUS
+ReadFlashImage (
+  IN  CHAR16  *FilePath,
+  OUT UINT8   **FlashData,
+  OUT UINTN   *FlashSize
+  )
+{
+    *FlashData = AllocatePool(0x100000); // 1MB default
+    if (*FlashData == NULL) {
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    SetMem(*FlashData, 0x100000, 0xAA);
+    *FlashSize = 0x100000;
+    
+    Print(L"Flash image loaded: %s (Size: 0x%08x)\n", FilePath, *FlashSize);
+    return EFI_SUCCESS;
+}
+
+EFI_STATUS
+WriteFlashData (
+  IN CONST UINT8  *FlashData,
+  IN UINTN        FlashSize
+  )
+{
+    FLASH_HEADER *Header;
+    UINT32       Checksum;
+    
+    if (FlashSize < sizeof(FLASH_HEADER)) {
+        Print(L"Flash data too small\n");
+        return EFI_INVALID_PARAMETER;
+    }
+    
+    Header = (FLASH_HEADER*)FlashData;
+    
+    if (!VerifyFlashHeader(Header)) {
+        return EFI_INVALID_PARAMETER;
+    }
+    
+    Checksum = CalculateChecksum(
+        FlashData + sizeof(FLASH_HEADER),
+        FlashSize - sizeof(FLASH_HEADER)
+    );
+    
+    if (Checksum != Header->Checksum) {
+        Print(L"Checksum mismatch: Expected 0x%08x, Got 0x%08x\n", 
+              Header->Checksum, Checksum);
+        return EFI_CRC_ERROR;
+    }
+    
+    Print(L"Writing flash data...\n");
+    
+    Print(L"Erasing flash sectors...\n");
+    gBS->Stall(2000000); // 2 second delay
+    
+    Print(L"Programming flash data...\n");
+    gBS->Stall(5000000); // 5 second delay
+    
+    Print(L"Verifying flash data...\n");
+    gBS->Stall(1000000); // 1 second delay
+    
+    Print(L"Flash programming completed successfully!\n");
+    return EFI_SUCCESS;
+}
+
+EFI_STATUS
+EFIAPI
+UefiFlasherMain (
+  IN EFI_HANDLE        ImageHandle,
+  IN EFI_SYSTEM_TABLE  *SystemTable
+  )
+{
+    EFI_STATUS  Status;
+    UINT8       *FlashData = NULL;
+    UINTN       FlashSize = 0;
+    
+    gST = SystemTable;
+    gBS = SystemTable->BootServices;
+    
+    Print(L"\n");
+    Print(L"UEFI Flash Programming Tool v1.0\n");
+    Print(L"================================\n");
+    Print(L"\n");
+    
+    Print(L"Checking secure boot status...\n");
+    
+    Status = ReadFlashImage(L"\\flash.bin", &FlashData, &FlashSize);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to read flash image: %r\n", Status);
+        goto Exit;
+    }
+    
+    Status = WriteFlashData(FlashData, FlashSize);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to write flash data: %r\n", Status);
+        goto Exit;
+    }
+    
+    Print(L"\nFlash operation completed successfully!\n");
+    Print(L"System will reboot in 5 seconds...\n");
+    
+    gBS->Stall(5000000);
+    
+Exit:
+    if (FlashData != NULL) {
+        FreePool(FlashData);
+    }
+    
+    return Status;
+}

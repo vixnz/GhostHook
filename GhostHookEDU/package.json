@@ -1,0 +1,21 @@
+{
+  "name": "ghosthook-automation",
+  "version": "1.0.0",
+  "description": "GhostHook Master Automation Suite",
+  "main": "automate.js",
+  "scripts": {
+    "deploy": "node automate.js",
+    "test": "node test.js",
+    "build": "node build.js",
+    "monitor": "node monitor.js"
+  },
+  "dependencies": {
+    "child_process": "^1.0.2",
+    "fs-extra": "^11.1.1",
+    "chalk": "^5.3.0",
+    "inquirer": "^9.2.7"
+  },
+  "keywords": ["automation", "deployment", "windows", "security"],
+  "author": "GhostHook Team",
+  "license": "MIT"
+}
